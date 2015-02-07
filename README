@@ -1,0 +1,52 @@
+Convert a foreign table into a local table, moving the foreign table
+
+Call pg-localize-foreign with -h for help.
+
+Requires python and psycopg2.
+
+Examples:
+
+~$ psql -d derp
+[derp]> create foreign table test (id integer, value text) server herp;
+CREATE FOREIGN TABLE
+[derp]> \q
+~$ pg-localize-foreign \
+>    --database derp \
+>    --user ryan \
+>    --password XXX \
+>    --host localhost \
+>    --port 5432 \
+>    --schema public \
+>    --table test \
+>    --verbose
+
+alter foreign table "public"."test" rename to "test_foreign";
+create table "public"."test" (like "public"."test_foreign" including all);
+insert into "public"."test" select * from "public"."test_foreign";
+~$ pg-localize-foreign \
+>    --database derp \
+>    --user ryan \
+>    --password XXX \
+>    --host localhost \
+>    --port 5432 \
+>    --schema public \
+>    --table test \
+>    --verbose
+>   refresh
+
+truncate table "public"."test";
+insert into "public"."test" select * from "public"."test_foreign";
+~$ pg-localize-foreign \
+>    --database derp \
+>    --user ryan \
+>    --password XXX \
+>    --host localhost \
+>    --port 5432 \
+>    --schema public \
+>    --table test \
+>    --verbose
+>   revert
+
+drop table "public"."test";
+alter foreign table "public"."test_foreign" rename to "test";
+~$

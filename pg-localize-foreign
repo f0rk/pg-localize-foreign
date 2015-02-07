@@ -1,0 +1,258 @@
+#!/usr/bin/env python
+
+import re
+import argparse
+
+import psycopg2
+
+
+class Localizer(object):
+
+    def __init__(self, database, user, password, host, port, schema, table,
+                 action, verbose=False):
+        """Create a localizer to import a database's foreign table.
+
+        :param database: The name of the database to connect to.
+        :param user: The user to connect to the database as.
+        :param password: The password to connect to the database with.
+        :param host: The host of the database.
+        :param port: The port of the database.
+        :param schema: The schema of the table to localize.
+        :param table: The table to localize.
+
+        :param action: The action to perform. One of "create", "refresh", or
+            "revert".
+
+        :param verbose: If True, print SQL statements out as the script runs
+            (default: False).
+
+        """
+
+        self.database = database
+        self.user = user
+        self.password = password
+        self.host = host
+        self.port = port
+        self.schema = schema
+        self.table = table
+
+        self.action = action
+
+        self.verbose = verbose
+
+    def run(self):
+
+        conn = None
+        cur = None
+
+        try:
+
+            # connect to our database
+            conn = self.connect()
+
+            # get ourselves a cursor
+            cur = conn.cursor()
+
+            # perform the correct action
+            if self.action == "create":
+                self.create(cur)
+            elif self.action == "refresh":
+                self.refresh(cur)
+            elif self.action == "revert":
+                self.revert(cur)
+            else:
+                raise Exception("Implementation Error")
+
+            # commit
+            conn.commit()
+
+        finally:
+            if cur is not None:
+                cur.close()
+
+            if conn is not None:
+                conn.close()
+
+    def create(self, cur):
+        """Perform the create action.
+
+        :param cur: A psycopg2 cursor object.
+
+        """
+
+        # figure out our new name
+        new_foreign_table = self.foreign_table_name(self.table)
+
+        # rename the foreign table
+        self.rename_foreign_table(cur, self.schema, self.table,
+                                  new_foreign_table)
+
+        # create local table
+        self.create_local_table(cur, self.schema, self.table, new_foreign_table)
+
+        # populate it
+        self.populate_table_from_foreign_table(cur, self.schema, self.table,
+                                               new_foreign_table)
+
+    def refresh(self, cur):
+        """Perform the refresh action.
+
+        :param cur: A psycopg2 cursor object.
+
+        """
+
+        # figure out the name of the foreign table
+        foreign_table = self.foreign_table_name(self.table)
+
+        # truncate the table
+        self.truncate_table(cur, self.schema, self.table)
+
+        # populate from the foreign table
+        self.populate_table_from_foreign_table(cur, self.schema, self.table,
+                                               foreign_table)
+
+    def revert(self, cur):
+        """Perform the revert action.
+
+        :param cur: A psycopg2 cursor object.
+
+        """
+
+        # figure out the name of the foreign table
+        foreign_table = self.foreign_table_name(self.table)
+
+        # drop the local table
+        self.drop_table(cur, self.schema, self.table)
+
+        # rename the foreign table
+        self.rename_foreign_table(cur, self.schema, foreign_table, self.table)
+
+    def connect(self):
+        """Create a connection to our databases."""
+
+        conn = psycopg2.connect(database=self.database, user=self.user,
+                                password=self.password, host=self.host,
+                                port=self.port)
+
+        return conn
+
+    def foreign_table_name(self, table):
+        """Return the new intended name of our foreign table.
+
+        :param table: The current name of the foreign table.
+
+        """
+
+        return "{}_foreign".format(table)
+
+    def rename_foreign_table(self, cur, schema, current_name, new_name):
+        """Rename a foreign table.
+
+        :param cur: A psycopg2 cursor object.
+        :param schema: The schema of the table.
+        :param current_name: The current name of the foreign table.
+        :param new_name: The new name.
+
+        """
+
+        stmt = ('alter foreign table "{}"."{}" rename to "{}";'
+                .format(schema, current_name, new_name))
+
+        if self.verbose:
+            print(stmt)
+
+        cur.execute(stmt)
+
+    def create_local_table(self, cur, schema, new_table, foreign_table):
+        """Create a local table from a foreign table.
+
+        :param cur: A psycopg2 cursor object.
+        :param schema: The schema of the table.
+        :param new_table: The name of the new table.
+        :param foreign_table: The name of the foreign table.
+
+        """
+
+        stmt = ('create table "{}"."{}" (like "{}"."{}" including all);'
+                .format(schema, new_table, schema, foreign_table))
+
+        if self.verbose:
+            print(stmt)
+
+        cur.execute(stmt)
+
+    def populate_table_from_foreign_table(self, cur, schema, table,
+                                          foreign_table):
+        """Populate the given table by selecting from the foreign table.
+
+        :param cur: A psycopg2 cursor object.
+        :param schema: The schema of the table.
+        :param new_table: The name of the new table.
+        :param foreign_table: The name of the foreign table.
+
+        """
+
+        stmt = ('insert into "{}"."{}" select * from "{}"."{}";'
+                .format(schema, table, schema, foreign_table))
+
+        if self.verbose:
+            print(stmt)
+
+        cur.execute(stmt)
+
+    def truncate_table(self, cur, schema, table):
+        """Truncate the given table.
+
+        :param cur: A psycopg2 cursor object.
+        :param schema: The schema of the table.
+        :param table: The name of the table.
+
+        """
+
+        stmt = 'truncate table "{}"."{}";'.format(schema, table)
+
+        if self.verbose:
+            print(stmt)
+
+        cur.execute(stmt)
+
+    def drop_table(self, cur, schema, table):
+        """Drop the given table.
+
+        :param cur: A psycopg2 cursor object.
+        :param schema: The schema of the table.
+        :param table: The name of the table.
+
+        """
+
+        stmt = 'drop table "{}"."{}";'.format(schema, table)
+
+        if self.verbose:
+            print(stmt)
+
+        cur.execute(stmt)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--database", required=True)
+    parser.add_argument("--user", required=True)
+    parser.add_argument("--password", required=True)
+    parser.add_argument("--host", required=True)
+    parser.add_argument("--port", required=True)
+    parser.add_argument("--schema", required=True)
+    parser.add_argument("--table", required=True)
+
+    parser.add_argument("action", nargs="?", default="create",
+                        choices=["create", "refresh", "revert"])
+
+    parser.add_argument("--verbose", action="store_true", default=False)
+
+    args = parser.parse_args()
+
+    localizer = Localizer(args.database, args.user, args.password, args.host,
+                          args.port, args.schema, args.table, args.action,
+                          verbose=args.verbose)
+    localizer.run()
+
