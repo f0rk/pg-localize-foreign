@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import re
 import argparse
 
 import psycopg2
@@ -155,8 +154,10 @@ class Localizer(object):
 
         """
 
-        stmt = ('alter foreign table "{}"."{}" rename to "{}";'
-                .format(schema, current_name, new_name))
+        stmt = ("alter foreign table {}.{} rename to {};"
+                .format(self.quote_ident(schema),
+                        self.quote_ident(current_name),
+                        self.quote_ident(new_name)))
 
         if self.verbose:
             print(stmt)
@@ -173,8 +174,10 @@ class Localizer(object):
 
         """
 
-        stmt = ('create table "{}"."{}" (like "{}"."{}" including all);'
-                .format(schema, new_table, schema, foreign_table))
+        stmt = ("create table {}.{} (like {}.{} including all);"
+                .format(self.quote_ident(schema), self.quote_ident(new_table),
+                        self.quote_ident(schema),
+                        self.quote_ident(foreign_table)))
 
         if self.verbose:
             print(stmt)
@@ -192,8 +195,10 @@ class Localizer(object):
 
         """
 
-        stmt = ('insert into "{}"."{}" select * from "{}"."{}";'
-                .format(schema, table, schema, foreign_table))
+        stmt = ("insert into {}.{} select * from {}.{};"
+                .format(self.quote_ident(schema), self.quote_ident(table),
+                        self.quote_ident(schema),
+                        self.quote_ident(foreign_table)))
 
         if self.verbose:
             print(stmt)
@@ -209,7 +214,8 @@ class Localizer(object):
 
         """
 
-        stmt = 'truncate table "{}"."{}";'.format(schema, table)
+        stmt = "truncate table {}.{};".format(self.quote_ident(schema),
+                                              self.quote_ident(table))
 
         if self.verbose:
             print(stmt)
@@ -225,12 +231,17 @@ class Localizer(object):
 
         """
 
-        stmt = 'drop table "{}"."{}";'.format(schema, table)
+        stmt = "drop table {}.{};".format(self.quote_ident(schema),
+                                          self.quote_ident(table))
 
         if self.verbose:
             print(stmt)
 
         cur.execute(stmt)
+
+    def quote_ident(self, name):
+        name = name.replace('"', '""')
+        return '"' + name + '"'
 
 
 if __name__ == "__main__":
